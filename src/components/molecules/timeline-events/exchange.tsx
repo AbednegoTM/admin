@@ -20,7 +20,7 @@ import RefreshIcon from "../../fundamentals/icons/refresh-icon"
 import TruckIcon from "../../fundamentals/icons/truck-icon"
 import DeletePrompt from "../../organisms/delete-prompt"
 import { ActionType } from "../actionables"
-import InfoTooltip from "../info-tooltip"
+import IconTooltip from "../icon-tooltip"
 import { FulfillmentStatus, PaymentStatus, ReturnStatus } from "../order-status"
 import EventActionables from "./event-actionables"
 import EventContainer, { EventIconColor } from "./event-container"
@@ -65,7 +65,6 @@ const Exchange: React.FC<ExchangeProps> = ({ event, refetch }) => {
   const [showCreateFulfillment, setShowCreateFulfillment] = useState(false)
   const cancelExchange = useAdminCancelSwap(event.orderId)
   const cancelReturn = useAdminCancelReturn(event.returnId)
-  const receiveReturn = useAdminReceiveReturn(event.returnId)
   const [differenceCardId, setDifferenceCardId] = useState<string | undefined>(
     undefined
   )
@@ -75,6 +74,8 @@ const Exchange: React.FC<ExchangeProps> = ({ event, refetch }) => {
   const [payable, setPayable] = useState(true)
   const { store } = useAdminStore()
   const { order } = useAdminOrder(event.orderId)
+
+  const { mutateAsync: receiveReturn } = useAdminReceiveReturn(event.returnId)
 
   const notification = useNotification()
 
@@ -88,13 +89,13 @@ const Exchange: React.FC<ExchangeProps> = ({ event, refetch }) => {
       return
     }
 
-    if (store.payment_link_template?.indexOf("{cart_id}") === -1) {
+    if (store.swap_link_template?.indexOf("{cart_id}") === -1) {
       setPaymentFormatWarning(
         "Store payment link does not have the default format, as it does not contain '{cart_id}'. Either update the payment link to include '{cart_id}' or update this method to reflect the format of your payment link."
       )
     }
 
-    if (!store.payment_link_template) {
+    if (!store.swap_link_template) {
       setPaymentFormatWarning(
         "No payment link has been set for this store. Please update store settings."
       )
@@ -102,13 +103,10 @@ const Exchange: React.FC<ExchangeProps> = ({ event, refetch }) => {
 
     if (event.exchangeCartId) {
       setDifferenceCardId(
-        store.payment_link_template?.replace(
-          /\{cart_id\}/,
-          event.exchangeCartId
-        )
+        store.swap_link_template?.replace(/\{cart_id\}/, event.exchangeCartId)
       )
     }
-  }, [store?.payment_link_template, event.exchangeCartId, event.paymentStatus])
+  }, [store?.swap_link_template, event.exchangeCartId, event.paymentStatus])
 
   const paymentLink = getPaymentLink(
     payable,
@@ -117,26 +115,27 @@ const Exchange: React.FC<ExchangeProps> = ({ event, refetch }) => {
     event.exchangeCartId
   )
 
-  const handleCancelExchange = () => {
-    cancelExchange.mutate(event.id)
+  const handleCancelExchange = async () => {
+    await cancelExchange.mutateAsync(event.id)
     refetch()
   }
 
-  const handleCancelReturn = () => {
-    cancelReturn.mutate()
+  const handleCancelReturn = async () => {
+    await cancelReturn.mutateAsync()
     refetch()
   }
 
-  const handleReceiveReturn = async (items) => {
-    Medusa.orders
-      .receiveReturn(event.returnId, { items })
-      .then(() => {
-        notification("Success", "Return received", "success")
-        refetch()
-      })
-      .catch((err) => {
-        notification("Error", getErrorMessage(err), "error")
-      })
+  const handleReceiveReturn = async (
+    items: { item_id: string; quantity: number }[]
+  ) => {
+    await receiveReturn(
+      { items },
+      {
+        onSuccess: () => {
+          refetch()
+        },
+      }
+    )
   }
 
   const handleProcessSwapPayment = () => {
@@ -168,7 +167,7 @@ const Exchange: React.FC<ExchangeProps> = ({ event, refetch }) => {
     actions.push({
       label: "Cancel return",
       icon: <TruckIcon size={20} />,
-      onClick: handleCancelReturn,
+      onClick: () => setShowCancelReturn(!showCancelReturn),
     })
   }
 
@@ -187,7 +186,7 @@ const Exchange: React.FC<ExchangeProps> = ({ event, refetch }) => {
   }
 
   const args = {
-    title: event.canceledAt ? "Exchange Canceled" : "Exchange Requested",
+    title: event.canceledAt ? "Exchange Cancelled" : "Exchange Requested",
     icon: event.canceledAt ? (
       <CancelIcon size={20} />
     ) : (
@@ -243,35 +242,29 @@ const Exchange: React.FC<ExchangeProps> = ({ event, refetch }) => {
       {showCancel && (
         <DeletePrompt
           handleClose={() => setShowCancel(!showCancel)}
-          onDelete={async () => handleCancelExchange()}
+          onDelete={handleCancelExchange}
           confirmText="Yes, cancel"
           heading="Cancel exchange"
           text="Are you sure you want to cancel this exchange?"
-          successText="Exchange canceled"
+          successText="Exchange cancelled"
         />
       )}
       {showCancelReturn && (
         <DeletePrompt
           handleClose={() => setShowCancelReturn(!showCancelReturn)}
-          onDelete={async () => handleCancelReturn()}
+          onDelete={handleCancelReturn}
           confirmText="Yes, cancel"
           heading="Cancel return"
           text="Are you sure you want to cancel this return?"
-          successText="Return canceled"
+          successText="Return cancelled"
         />
       )}
-      {showReceiveReturn && (
+      {showReceiveReturn && order && (
         <ReceiveMenu
           order={order}
-          returnRequest={{
-            ...event.raw.return_order,
-            is_swap: true,
-            swap_id: event.id,
-          }}
+          returnRequest={event.raw.return_order}
           onReceiveSwap={handleReceiveReturn}
           onDismiss={() => setShowReceiveReturn(false)}
-          notification={notification}
-          isSwapOrClaim={true}
         />
       )}
       {showCreateFulfillment && (
@@ -307,7 +300,7 @@ function getPaymentLink(
   return payable ? (
     <div className="inter-small-regular text-grey-50 flex flex-col gap-y-xsmall">
       <div className="flex items-center gap-x-xsmall">
-        {paymentFormatWarning && <InfoTooltip content={paymentFormatWarning} />}
+        {paymentFormatWarning && <IconTooltip content={paymentFormatWarning} />}
         <span>Payment link:</span>
       </div>
       {differenceCardId && (
